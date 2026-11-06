@@ -1,6 +1,6 @@
 # Software Plan — MEAM 5100 Team 2
 
-Status: skeleton (design review draft). Fill in details as modules are implemented.
+Status: interfaces only; implementation pending. See [TopHat](tophat_module.md).
 
 Team: Alexander Peppas, Sreya Chamakura, Linqi Zhe
 
@@ -23,6 +23,7 @@ sensors.
 |  Control layer    ESP32 firmware                              |
 |                   Comm -> Supervisor -> Motion -> MotorDriver |
 |                   Sensors ---------^                          |
+|                   TopHat ----------^                          |
 +---------------------------------------------------------------+
 |  Hardware layer   TB6612FNG driver, 2x DC motors (6V 100RPM), |
 |                   IR receiver, other sensors (TBD)            |
@@ -33,15 +34,16 @@ sensors.
 
 - Manual: phone button -> Comm -> Supervisor -> Motion -> MotorDriver -> motors
 - Autonomous: Sensors -> Supervisor -> Motion -> MotorDriver -> motors
+- Competition status: TopHat -> Supervisor -> permitted action or motor stop
+- Usage reporting: Comm -> TopHat -> I2C -> competition device (2 Hz)
 - Telemetry: Sensors / Supervisor state -> Comm -> phone (status display)
 
 ---
 
 ## 2. Firmware Modules
 
-Each module has one owner, one header, and a clear interface. Modules only
-talk to the module directly below them; the Supervisor is the only module
-that talks to everything.
+Supervisor selects actions and handles stops. Comm passes usage counts to
+TopHat. Only MotorDriver writes motor pins.
 
 | Module | Responsibility | Depends on | Owner |
 |---|---|---|---|
@@ -49,7 +51,8 @@ that talks to everything.
 | Motion | Translate high-level actions (forward, backward, spin left, spin right, stop) into left/right wheel speeds. Future: straight-line correction, timed turns. | MotorDriver | TBD |
 | Sensors | Read and preprocess each sensor into a physical quantity or boolean (e.g. IR beacon detected, beacon direction, distance). Interrupt-driven where timing matters (IR pulse frequency). | HAL | TBD |
 | Comm | Connect to lab Wi-Fi in STA mode, serve the web page, receive commands, send telemetry. | — | TBD |
-| Supervisor | State machine: decides which source drives the motors (manual / autonomous / stopped). Enforces safety rules. | Comm, Sensors, Motion | TBD |
+| TopHat | Report Wi-Fi usage over I2C at 2 Hz, read SP, and expose status/validity to Supervisor. | Shared I2C bus, verified course protocol | TBD |
+| Supervisor | State machine: decides which source drives the motors (manual / autonomous / stopped). Enforces safety rules. | Comm, Sensors, TopHat, Motion | TBD |
 
 ### 2.1 Main loop (conceptual)
 
@@ -57,15 +60,19 @@ that talks to everything.
 setup():
     MotorDriver.init()
     Sensors.init()
+    TopHat.init()        // shared I2C bus with Sensors
     Comm.init()          // lab Wi-Fi (STA) + web server
     Supervisor.init()
 
 loop():  // fixed period, e.g. 20 ms
     Sensors.update()
     cmd = Comm.pollCommand()
-    action = Supervisor.step(cmd, Sensors.state())
+    // Comm passes usage counts to TopHat; counting rules TBD.
+    TopHat.update()      // internal timers for polling and 500 ms reports
+    action = Supervisor.step(cmd, Sensors.state(), TopHat.state())
+    // Stop conditions take priority over movement.
     Motion.execute(action)
-    Comm.sendTelemetry(Supervisor.state(), Sensors.state())
+    Comm.sendTelemetry(Supervisor.mode(), Sensors.state())
 ```
 
 ---
@@ -74,17 +81,23 @@ loop():  // fixed period, e.g. 20 ms
 
 | Mode | Who drives motors | Entered by |
 |---|---|---|
-| MANUAL | Web page buttons | Default at boot; any direction button |
+| MANUAL | Web page buttons | Fresh direction command when safety conditions allow |
 | AUTO | Supervisor using sensor data | "Auto" button on web page |
-| STOPPED | Nobody (motors off) | Stop button, comm timeout, fault |
+| STOPPED | Nobody (motors off) | Boot, stop button, comm timeout, zero SP, fault |
 
 Rules:
 
-1. In MANUAL, sensor readings are displayed but never override the driver.
-2. In AUTO, pressing any direction button immediately returns to MANUAL.
+1. In MANUAL, ordinary navigation sensor readings do not override the driver.
+   TopHat and all stop conditions still override manual and autonomous motion.
+2. In AUTO, a direction command returns to MANUAL only if safety conditions allow.
 3. In any mode, if no message is received from the phone for N ms
    (e.g. 500 ms heartbeat timeout), the robot enters STOPPED.
 4. MotorDriver exposes an emergency stop that bypasses Motion.
+5. Zero TopHat SP stops the robot. Report Wi-Fi usage over I2C every 500 ms;
+   the packet format and counting rules are TBD.
+6. Planned: stay STOPPED at boot or while TopHat status is invalid/stale.
+   On recovery, discard queued motion and require a new command. Timeout and
+   report-failure handling are TBD.
 
 ---
 
@@ -124,7 +137,7 @@ Course reference: Lecture 17, `510-2026C-L17-ledc-wifi`, slides 36 (STA/AP),
 
 ## 5. Sensor Plan
 
-Sensor BOM is not finalized yet (design review slide 4 is empty). Candidate list:
+Sensor interfaces and pin assignments are still TBD:
 
 | Sensor | Purpose | Interface | Processing |
 |---|---|---|---|
@@ -157,12 +170,14 @@ firmware/
     motion.h          # Motion interface
     sensors.h         # Sensors interface
     comm.h            # Comm interface
+    tophat.h          # TopHat communication and status interface (planned)
     supervisor.h      # Supervisor state machine interface
     config.h          # pin map, constants, timeouts
   data/
     index.html        # web UI served by ESP32
 docs/
   software_plan.md    # this document
+  tophat_module.md    # TopHat responsibilities and integration plan
 ```
 
 ---
@@ -170,6 +185,7 @@ docs/
 ## 8. Open Questions
 
 - Final sensor list and pin assignments.
+- Current TopHat protocol, Wi-Fi usage definition, shared I2C setup, and timeouts.
 - Final robot static IP, gateway/subnet, and local device reachability on the lab network.
 - WebSocket vs HTTP for the first milestone.
 - Whether to add wheel encoders for closed-loop speed control.
