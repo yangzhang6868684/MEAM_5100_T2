@@ -1,1 +1,8 @@
+#SYSTEM FILES
 .DS_Store
+Thumbs.db
+Desktop.ini
+# COMPLIATION OUTPUT,CACHE, and TEMPORARY FILES
+.pio/
+build/
+*.swp
