@@ -9,8 +9,10 @@ Team: Alexander Peppas, Sreya Chamakura, Linqi Zhe
 ## 1. System Overview
 
 The robot is a two-wheel differential drive platform controlled by an ESP32.
-A phone connects to the ESP32's WiFi access point and drives the robot from a
-web page. The ESP32 can also act autonomously using onboard sensors.
+The ESP32 connects to the laboratory Wi-Fi router in Station (STA) mode.
+A phone or laptop on the same local network drives the robot through a web
+page hosted on the ESP32. The ESP32 can also act autonomously using onboard
+sensors.
 
 ### 1.1 Layers
 
@@ -46,7 +48,7 @@ that talks to everything.
 | MotorDriver | Drive TB6612FNG: PWM + direction pins, standby, emergency stop. Only module that touches motor pins. | HAL | TBD |
 | Motion | Translate high-level actions (forward, backward, spin left, spin right, stop) into left/right wheel speeds. Future: straight-line correction, timed turns. | MotorDriver | TBD |
 | Sensors | Read and preprocess each sensor into a physical quantity or boolean (e.g. IR beacon detected, beacon direction, distance). Interrupt-driven where timing matters (IR pulse frequency). | HAL | TBD |
-| Comm | Start WiFi AP, serve the web page, receive commands, send telemetry. | — | TBD |
+| Comm | Connect to lab Wi-Fi in STA mode, serve the web page, receive commands, send telemetry. | — | TBD |
 | Supervisor | State machine: decides which source drives the motors (manual / autonomous / stopped). Enforces safety rules. | Comm, Sensors, Motion | TBD |
 
 ### 2.1 Main loop (conceptual)
@@ -55,7 +57,7 @@ that talks to everything.
 setup():
     MotorDriver.init()
     Sensors.init()
-    Comm.init()          // AP + web server
+    Comm.init()          // lab Wi-Fi (STA) + web server
     Supervisor.init()
 
 loop():  // fixed period, e.g. 20 ms
@@ -88,13 +90,35 @@ Rules:
 
 ## 4. Communication Design
 
-- ESP32 runs in AP mode; phone joins its network and opens the page.
-- Page is stored on the ESP32 (PROGMEM or LittleFS) — no internet needed.
-- Transport: WebSocket preferred over plain HTTP GET for low-latency
-  press/release and heartbeat. HTTP is acceptable as a first milestone.
+- Primary network mode: Station (`WIFI_STA`). The ESP32 joins the laboratory
+  router; the phone or laptop joins the same local network and accesses the
+  ESP32's web server by its IP address.
+- Addressing: use the course-assigned static IP for the laboratory network.
+  Lecture 17 assigns `192.168.1.169` to Yang Zhang's development board; confirm
+  the address for the final shared robot, gateway, and subnet before integration.
+  Use the laboratory router specified by the course rather than assuming the
+  general campus network is suitable.
+- The ESP32 serves the web page over HTTP. The page is stored on the ESP32
+  (PROGMEM or LittleFS); an external web server or Internet connection is not
+  required, but the laboratory router must allow local devices to communicate.
+- Control/status transport: WebSocket is preferred for press/release,
+  heartbeat, and telemetry. HTTP command endpoints are acceptable for the
+  first milestone. This choice is independent of STA versus AP network mode.
+- Connection handling (planned): connection/reconnection must not block the
+  control loop. Network loss or a heartbeat timeout enters STOPPED; after
+  reconnection, require a fresh valid command before resuming motion.
+- Validation: test browser-to-ESP32 reachability, command latency, and timeout
+  behavior on the laboratory network with other teams present. STA mode does
+  not eliminate radio interference or congestion. The 500 ms heartbeat timeout
+  remains an initial value to validate under those conditions.
+- Configure network credentials locally; do not include laboratory passwords
+  in committed source files.
 - Message set (to be finalized):
   - phone -> robot: `drive <forward|backward|left|right|stop>`, `mode <manual|auto>`, `heartbeat`
   - robot -> phone: `state <mode>`, `sensors {...}`, `battery <v>`
+
+Course reference: Lecture 17, `510-2026C-L17-ledc-wifi`, slides 36 (STA/AP),
+38 (assigned IPs), 62 (lab connection), 66 (addressing), and 71 (STA web server).
 
 ---
 
@@ -117,7 +141,7 @@ Finalize this table once the hardware BOM is complete.
 | # | Milestone | Depends on | Target date | Owner |
 |---|---|---|---|---|
 | 1 | MotorDriver + Motion: 4 actions controllable over serial | Hardware assembled | TBD | TBD |
-| 2 | Comm: AP + web page drives robot from phone | M1 | TBD | TBD |
+| 2 | Comm: lab Wi-Fi (STA) + ESP32-hosted web page drives robot from phone | M1 | TBD | TBD |
 | 3 | One sensor stable + Supervisor runs one autonomous behavior | M1, sensor BOM | TBD | TBD |
 | 4 | Multi-sensor behavior + full task logic + integration test | M2, M3 | TBD | TBD |
 
@@ -146,6 +170,7 @@ docs/
 ## 8. Open Questions
 
 - Final sensor list and pin assignments.
+- Final robot static IP, gateway/subnet, and local device reachability on the lab network.
 - WebSocket vs HTTP for the first milestone.
 - Whether to add wheel encoders for closed-loop speed control.
 - Battery voltage monitoring on the ESP32 (ADC divider) for low-battery stop.

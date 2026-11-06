@@ -1,5 +1,5 @@
 // comm.h — Comm module
-// WiFi AP, web server, command intake, telemetry out.
+// Lab Wi-Fi in Station (STA) mode, web server, command intake, telemetry out.
 #pragma once
 
 struct SensorState;
@@ -12,7 +12,7 @@ struct Command {
 };
 
 namespace Comm {
-    void init();                        // start AP + server, serve data/index.html
+    void init();                        // start lab Wi-Fi (STA) + server, serve data/index.html
     Command pollCommand();              // non-blocking; valid=false if nothing new
     unsigned long lastMessageMs();      // for heartbeat timeout
     void sendTelemetry(Mode mode, const SensorState& s);
